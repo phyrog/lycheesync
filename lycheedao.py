@@ -121,17 +121,13 @@ class LycheeDAO:
             print "INFO album list in db:", self.albumslist
         return self.albumslist
 
-    def albumExists(self, album):
+    def albumExists(self, album_name):
         """
         Check if an album exists based on its name
         Parameters: an album properties list. At least the name should be specified
         Returns None or the albumid if it exists
         """
-
-        if album['name'] in self.albumslist.keys():
-            return self.albumslist[album['name']]
-        else:
-            return None
+        return self.albumslist[album_name]
 
     def photoExists(self, photo):
         """
@@ -172,7 +168,9 @@ class LycheeDAO:
             cur = self.db.cursor()
             cur.execute(query)
             self.db.commit()
-
+        except Exception:
+            print "Already exists..."
+        try:
             query = "select id from lychee_albums where title='" + album['name'] + "'"
             cur.execute(query)
             row = cur.fetchone()
@@ -188,9 +186,26 @@ class LycheeDAO:
         finally:
             return album['id']
 
+    def erasePhoto(self, photo_name, album_id):
+        query = "delete from lychee_photos where album = " + str(album_id) + " and title = '" + photo_name + "'"
+        selquery = "select id from lychee_photos where album = " + str(album_id) + ''
+        albquery = "delete from lychee_albums where id = " + str(album_id) + ''
+        try:
+            cur = self.db.cursor()
+            cur.execute(query)
+
+            cur.execute(selquery)
+            rows = cur.fetchall()
+
+            if not rows:
+                cur.execute(albquery)
+
+            self.db.commit()
+        except Exception:
+            print "Erasing " + photo_name + " failed."
+
     def eraseAlbum(self, album):
         """
-        Deletes all photos of an album but don't delete the album itself
         Parameters:
         - album: the album properties list to erase.  At least its id must be provided
         Return list of the erased photo url
@@ -198,6 +213,7 @@ class LycheeDAO:
         res = []
         query = "delete from lychee_photos where album = " + str(album['id']) + ''
         selquery = "select url from lychee_photos where album = " + str(album['id']) + ''
+        albquery = "delete from lychee_albums where id = " + str(album['id']) + ''
         try:
             cur = self.db.cursor()
             cur.execute(selquery)
@@ -205,6 +221,7 @@ class LycheeDAO:
             for row in rows:
                 res.append(row[0])
             cur.execute(query)
+            cur.execute(albquery)
             self.db.commit()
             if self.conf["verbose"]:
                 print "INFO album erased: ", album

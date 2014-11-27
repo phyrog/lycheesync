@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import sys
+import time
+import logging
+from watchdog.observers import Observer
+from galleryhandler import GalleryHandler
 import os
 import shutil
 import stat
@@ -27,17 +32,15 @@ class LycheeSyncer:
         """
         self.conf = conf
 
-    def getAlbumNameFromPath(self, album):
+    def getAlbumNameFromPath(self, path):
         """
         build a lychee compatible albumname from an albumpath (relative to the srcdir main argument)
-        Takes an album properties list  as input. At least the path sould be specified (relative albumpath)
         Returns a string, the lychee album name
         """
         # make a list with directory and sub dirs
-        path = album['relpath'].split(os.sep)
+        path = path.split(os.sep)
         # join the rest: no subfolders in lychee yet
-        album['name'] = "_".join(path).lower()
-        return album['name']
+        return "_".join(path).lower()
 
     def isAPhoto(self, file):
         """
@@ -49,22 +52,20 @@ class LycheeSyncer:
         ext = os.path.splitext(file)[-1].lower()
         return (ext in validimgext)
 
-    def albumExists(self, album):
+    def albumExists(self, album_name):
         """
-        Takes an album properties list  as input. At least the relpath sould be specified (relative albumpath)
         Returns an albumid or None if album does not exists
         """
+        self.dao.albumExists(self, album_name)
 
-    def createAlbum(self, album):
+    def createAlbum(self, album_name):
         """
         Creates an album
-        Inputs:
-        - album: an album properties list. at least path should be specified (relative albumpath)
         Returns an albumid or None if album does not exists
         """
-        album['id'] = None
-        album['name'] = self.getAlbumNameFromPath(album)
-        if album['name'] != "":
+        album = {}
+        if album_name != "":
+            album['name'] = album_name
             album['id'] = self.dao.createAlbum(album)
         return album['id']
 
@@ -245,106 +246,16 @@ class LycheeSyncer:
         self.deleteFiles(filelist)
 
     def sync(self):
-        """
-        Program main loop
-        Scans files to add in the sourcedirectory and add them to Lychee
-        according to the conf file and given parameters
-        Returns nothing
-        """
-
-        # Connect db
-        # and drop it if dropdb activated
         self.dao = LycheeDAO(self.conf)
 
-        if self.conf['dropdb']:
-            self.deleteAllFiles()
-
-        # Load db
-
-        createdalbums = 0
-        discoveredphotos = 0
-        importedphotos = 0
-        album = {}
-        albums = []
-        # walkthroug each file / dir of the srcdir
-        for root, dirs, files in os.walk(self.conf['srcdir']):
-
-            # Init album data
-            album['id'] = None
-            album['name'] = None
-            album['path'] = None
-            album['relpath'] = None  # path relative to srcdir
-            album['photos'] = []  # path relative to srcdir
-
-            # if a there is at least one photo in the files
-            if any([self.isAPhoto(f) for f in files]):
-                album['path'] = root
-
-                # don't know what to do with theses photo
-                # and don't wan't to create a default album
-                if album['path'] == self.conf['srcdir']:
-                    msg = ("WARN: file at srcdir root won't be added to lychee, " +
-                           "please move them in a subfolder"), os.path.join(root, f)
-                    print msg
-                    continue
-
-                # Fill in other album properties
-                # albumnames start at srcdir (to avoid absolute path albumname)
-                album['relpath'] = os.path.relpath(album['path'], self.conf['srcdir'])
-                album['name'] = self.getAlbumNameFromPath(album)
-                album['id'] = self.dao.albumExists(album)
-
-                if not(album['id']):
-                    # create album
-                    album['id'] = self.createAlbum(album)
-                    createdalbums += 1
-                elif self.conf['replace']:
-                    # drop album photos
-                    filelist = self.dao.eraseAlbum(album)
-                    self.deleteFiles(filelist)
-
-                # Albums are created or emptied, now take care of photos
-                for f in files:
-                    if self.isAPhoto(f):
-
-                        try:
-                            discoveredphotos += 1
-                            photo = LycheePhoto(self.conf, f, album)
-
-                            if not(self.dao.photoExists(photo)):
-                                if self.conf['verbose']:
-                                    print "INFO: adding to lychee", os.path.join(root, f)
-                                self.makeThumbnail(photo)
-                                res = self.addFileToAlbum(photo)
-                                self.adjustRotation(photo)
-                                # increment counter
-                                if res:
-                                    importedphotos += 1
-                                # report
-                                if self.conf['verbose']:
-                                    if res:
-                                        album['photos'].append(photo)
-                                    else:
-                                        print "ERROR: while adding to lychee", os.path.join(root, f)
-                            else:
-                                if self.conf['verbose']:
-                                    print "WARN: photo already exists in lychee: ", photo.srcfullpath
-                        except Exception:
-                            print "ERROR could not add " + str(f) + " to album " + album['name']
-                            traceback.print_exc()
-
-                a = album.copy()
-                albums.append(a)
-
-        self.updateAlbumsDate(albums)
-        if self.conf['sort']:
-            self.reorderalbumids(albums)
-            self.dao.reinitAlbumAutoIncrement()
-        self.dao.close()
-
-        # Final report
-        print "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-        print "Directory scanned:", self.conf['srcdir']
-        print "Created albums: ", str(createdalbums)
-        print str(importedphotos), "photos imported on", str(discoveredphotos), "discovered"
-        print "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        path = self.conf["srcdir"]
+        event_handler = GalleryHandler(self)
+        observer = Observer()
+        observer.schedule(event_handler, path, recursive=True)
+        observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+        observer.join()

@@ -169,7 +169,7 @@ class LycheeDAO:
             cur.execute(query)
             self.db.commit()
         except Exception:
-            print "Already exists..."
+            "already exists"
         try:
             query = "select id from lychee_albums where title='" + album['name'] + "'"
             cur.execute(query)

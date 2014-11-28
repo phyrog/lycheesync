@@ -1,6 +1,11 @@
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileDeletedEvent
 from lycheemodel import LycheePhoto
 import os
+
+def dict_to_obj(d):
+    foo = lambda:0
+    foo.__dict__ = d
+    return foo
 
 class GalleryHandler(FileSystemEventHandler):
 
@@ -14,6 +19,8 @@ class GalleryHandler(FileSystemEventHandler):
             album = {}
             album['path'] = os.path.dirname(event.src_path)
             album['relpath'] = os.path.relpath(album['path'], self.syncer.conf['srcdir'])
+            if album['relpath'] == '.':
+                return
             album['name'] = self.syncer.getAlbumNameFromPath(album['relpath'])
             album['id'] = self.syncer.createAlbum(album['name'])
             photo = LycheePhoto(self.syncer.conf, os.path.basename(event.src_path), album)
@@ -44,3 +51,5 @@ class GalleryHandler(FileSystemEventHandler):
 
     def on_moved(self, event):
         super(GalleryHandler, self).on_moved(event)
+        self.on_deleted(FileDeletedEvent(event.src_path))
+        self.on_created(FileCreatedEvent(event.dest_path))
